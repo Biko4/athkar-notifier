@@ -1,0 +1,5 @@
+# مفتاح الخدمة لا يُرفع أبداً — مكانه GitHub Secrets فقط
+*.json
+!package.json
+.venv/
+__pycache__/
