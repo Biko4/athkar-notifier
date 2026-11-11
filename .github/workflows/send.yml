@@ -1,0 +1,33 @@
+name: send-notifications
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # كل 15 دقيقة (GitHub قد يؤخرها بضع دقائق)
+  workflow_dispatch:          # تشغيل يدوي من تبويب Actions
+    inputs:
+      dry_run:
+        description: 'تجربة بدون إرسال فعلي (true/false)'
+        default: 'false'
+
+concurrency:
+  group: notifier
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python send.py
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
