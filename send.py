@@ -35,16 +35,27 @@ DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 def init():
     raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
     if not raw:
-        sys.exit("FIREBASE_SERVICE_ACCOUNT غير موجود في Secrets")
-    firebase_admin.initialize_app(credentials.Certificate(json.loads(raw)))
+        sys.exit("خطأ: السر FIREBASE_SERVICE_ACCOUNT غير موجود أو فارغ في "
+                 "Settings → Secrets and variables → Actions")
+    try:
+        info = json.loads(raw)
+    except json.JSONDecodeError as e:
+        sys.exit(f"خطأ: FIREBASE_SERVICE_ACCOUNT ليس JSON صالحاً ({e}). "
+                 "الصق محتوى ملف مفتاح الخدمة كاملاً كما هو")
+    if info.get("type") != "service_account" or "private_key" not in info:
+        sys.exit("خطأ: هذا ليس ملف مفتاح خدمة (Service account). "
+                 "أنشئه من Firebase → Project settings → Service accounts")
+    print(f"المشروع: {info.get('project_id')} — الحساب: {info.get('client_email')}")
+    firebase_admin.initialize_app(credentials.Certificate(info))
     return firestore.client()
 
 
 def pick(m, lang):
+    """نص اللغة نفسها فقط — لا رجوع للعربي أو الإنجليزي: اللغة التي لم
+    يكتب لها الأدمن نصاً لا يُرسل لها شيء. (نص قديم بلا لغات = عربي)."""
     if isinstance(m, str):
-        return m
-    m = m or {}
-    return m.get(lang) or m.get("ar") or m.get("en") or next(iter(m.values()), "")
+        return m if lang == "ar" else ""
+    return ((m or {}).get(lang) or "").strip()
 
 
 def build_messages(doc_id, d):
@@ -53,8 +64,8 @@ def build_messages(doc_id, d):
     msgs = []
     for lang in LANGS:
         title, body = pick(d.get("title"), lang), pick(d.get("body"), lang)
-        if not title and not body:
-            continue
+        if not title or not body:
+            continue  # لا نص بهذه اللغة ← لا إرسال لها
         msgs.append(messaging.Message(
             topic=TOPIC_PREFIX + lang,
             notification=messaging.Notification(title=title, body=body, image=image),
@@ -86,8 +97,12 @@ def recover_stuck(db, now):
 
 
 def main():
-    db = init()
+    try:
+        db = init()
+    except Exception as e:  # noqa: BLE001
+        sys.exit(f"خطأ في الاتصال بـ Firebase: {e}")
     now = datetime.now(timezone.utc)
+    print(f"الوقت: {now:%Y-%m-%d %H:%M} UTC — DRY_RUN={DRY_RUN}")
     if not DRY_RUN:
         recover_stuck(db, now)
 
@@ -134,7 +149,8 @@ def main():
                 "failCount": resp.failure_count,
             })
             last_sent = sent_at
-            print(f"[{snap.id}] أُرسل لـ {resp.success_count} لغة")
+            langs = [m.topic.removeprefix(TOPIC_PREFIX) for m in msgs]
+            print(f"[{snap.id}] أُرسل للغات {langs} — نجح {resp.success_count}، فشل {resp.failure_count}")
         except Exception as e:  # noqa: BLE001
             had_error = True
             print(f"[{snap.id}] فشل: {e}")
